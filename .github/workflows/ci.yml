@@ -1,0 +1,66 @@
+name: Library CI
+
+on:
+  push:
+    branches: [ main, feature/** ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    name: Build Library
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build library
+        run: ./gradlew build
+
+      - name: Publish to Maven Local (for testing)
+        run: ./gradlew publishToMavenLocal
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: library-jar
+          path: build/libs/*.jar
+
+  # This job demonstrates the API differences between branches
+  api-comparison:
+    name: API Comparison
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/feature/method-signature-change'
+
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Show breaking changes
+        run: |
+          echo "## Breaking Changes in v2.0.0"
+          echo ""
+          echo "### UserService"
+          echo "- \`findById(Long)\` → \`findById(String)\` - Parameter type changed"
+          echo "- \`User findById()\` → \`Optional<User> findById()\` - Return type changed"
+          echo ""
+          echo "### User"
+          echo "- \`Long getId()\` → \`String getId()\` - Return type changed"
+          echo "- Constructor: \`User(Long, String, String)\` → \`User(String, String, String)\`"
