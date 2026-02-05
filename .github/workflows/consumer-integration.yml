@@ -1,0 +1,141 @@
+name: Consumer Integration Test
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  integration-test:
+    name: Test Consumer Compatibility
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout library (PR branch)
+        uses: actions/checkout@v4
+        with:
+          path: dep-library
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Parse CONSUMERS.yaml and clone consumers
+        id: consumers
+        run: |
+          cd dep-library
+
+          # Install yq for YAML parsing
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+          # Extract consumer repos from CONSUMERS.yaml
+          CONSUMERS=$(yq -r '.consumers[].repository' CONSUMERS.yaml)
+
+          echo "Found consumers:"
+          echo "$CONSUMERS"
+
+          # Clone each consumer repo
+          cd ..
+          for repo in $CONSUMERS; do
+            repo_name=$(basename "$repo" .git)
+            echo "Cloning $repo_name from $repo"
+            git clone "$repo" "$repo_name"
+          done
+
+      - name: Setup composite build
+        run: |
+          cd dep-library
+
+          # Get consumer names
+          CONSUMER_NAMES=$(yq -r '.consumers[].name' CONSUMERS.yaml)
+
+          # Create composite build settings
+          cat > settings.gradle.kts << 'EOF'
+          rootProject.name = "library"
+
+          // Include consumers for composite build testing
+          EOF
+
+          for name in $CONSUMER_NAMES; do
+            if [ -d "../$name" ]; then
+              echo "includeBuild(\"../$name\")" >> settings.gradle.kts
+            fi
+          done
+
+          echo "=== Composite build settings.gradle.kts ==="
+          cat settings.gradle.kts
+
+      - name: Configure consumers to use local library
+        run: |
+          cd dep-library
+          CONSUMER_NAMES=$(yq -r '.consumers[].name' CONSUMERS.yaml)
+
+          for name in $CONSUMER_NAMES; do
+            if [ -d "../$name" ]; then
+              echo "Configuring $name for composite build..."
+
+              # Update consumer's settings.gradle.kts to include the library
+              cat > "../$name/settings.gradle.kts" << EOF
+          rootProject.name = "$name"
+
+          // Composite build: use local library source instead of published artifact
+          includeBuild("../dep-library") {
+              dependencySubstitution {
+                  substitute(module("com.example:library")).using(project(":"))
+              }
+          }
+          EOF
+
+              echo "=== $name settings.gradle.kts ==="
+              cat "../$name/settings.gradle.kts"
+            fi
+          done
+
+      - name: Build library
+        run: |
+          cd dep-library
+          chmod +x gradlew
+          ./gradlew build
+
+      - name: Run consumer integration tests
+        run: |
+          cd dep-library
+          CONSUMER_NAMES=$(yq -r '.consumers[].name' CONSUMERS.yaml)
+
+          FAILED=""
+          for name in $CONSUMER_NAMES; do
+            if [ -d "../$name" ]; then
+              echo ""
+              echo "=========================================="
+              echo "Testing consumer: $name"
+              echo "=========================================="
+
+              cd "../$name"
+              chmod +x gradlew
+
+              if ./gradlew build --info; then
+                echo "✅ $name: PASSED"
+              else
+                echo "❌ $name: FAILED"
+                FAILED="$FAILED $name"
+              fi
+
+              cd ../dep-library
+            fi
+          done
+
+          if [ -n "$FAILED" ]; then
+            echo ""
+            echo "=========================================="
+            echo "❌ FAILED CONSUMERS:$FAILED"
+            echo "=========================================="
+            exit 1
+          fi
+
+          echo ""
+          echo "=========================================="
+          echo "✅ All consumer integration tests passed!"
+          echo "=========================================="
