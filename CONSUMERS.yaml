@@ -1,0 +1,18 @@
+# CONSUMERS.yaml
+# Static mapping of repositories that consume this library
+# Maintained in the producer repo (dep-library)
+
+schema_version: "1.0"
+
+producer:
+  name: dep-library
+  repository: https://github.com/pravasna30-dev/dep-library
+
+consumers:
+  - name: dep-consumer
+    repository: https://github.com/pravasna30-dev/dep-consumer
+    version: "1.0.0"
+    modules:
+      - com.example.library
+    criticality: critical
+    contact: pravasna30@gmail.com
